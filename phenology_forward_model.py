@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-物候前向模型验证系统 - 基于20年观测数据的参数更新版本
-使用6参数物候公式模拟稻谷、玉米、小麦的EVI时间序列
-与实际观测数据进行对比验证
+Phenology Forward Model Validation System - Parameter Updated Version Based on 20-Year Observation Data
+Using 6-parameter phenology formula to simulate EVI time series for rice, maize, wheat, and soybean
+Compare and validate against actual observation data
 
-更新说明（2024年基于Grid6地区2001-2020年EVI观测数据分析）：
-1. 冬季最小值m参数大幅扩展（0.02-0.30）- 适应暖冬年份如2020年冬季EVI高达0.44
-2. 夏季最大值M参数扩展 - 适应混合像元观测到的峰值0.72，单一作物峰值应更高
-3. 所有时间参数扩展±10-15天 - 适应20年间气候变异导致的物候期变化
-4. 保持原有的蒙特卡罗前向模拟方法论，重点是统计分析而非参数优化
+Update Notes (Based on Grid6 2001-2020 EVI observation data analysis):
+1. Winter minimum value m parameter significantly expanded (0.02-0.30) - adapt to warm winter years like 2020 with winter EVI up to 0.44
+2. Summer maximum value M parameter expanded - adapt to mixed pixel observations with peak 0.72, single crop peak should be higher
+3. All time parameters expanded ±10-15 days - adapt to phenological changes caused by climate variability over 20 years
+4. Maintain original Monte Carlo forward simulation methodology, focus on statistical analysis rather than parameter optimization
+5. Added soybean crop based on expert knowledge of growth stages
 """
 
 import numpy as np
@@ -19,71 +20,80 @@ import random
 from datetime import datetime
 
 class PhenologyForwardModel:
-    """物候前向模型类"""
+    """Phenology Forward Model Class"""
     
     def __init__(self):
-        """初始化参数范围"""
-        # 定义三种作物的参数范围（基于2001-2020年Grid6观测数据分析更新）
-        # 更新说明：
-        # 1. 冬季最小值m: 0.05-0.15 → 0.02-0.30 (适应暖冬年份如2020)
-        # 2. 夏季最大值M: 适当扩展以适应混合像元峰值0.72观测值
-        # 3. 时间参数: 各扩展±10-15天适应气候变异
+        """Initialize parameter ranges"""
+        # Define parameter ranges for four crop types (Updated based on 2001-2020 Grid6 observation data analysis)
+        # Update notes:
+        # 1. Winter minimum m: 0.05-0.15 → 0.02-0.30 (adapt to warm winter years like 2020)
+        # 2. Summer maximum M: appropriately expanded to adapt to mixed pixel peak 0.72 observations
+        # 3. Time parameters: each expanded ±10-15 days to adapt to climate variability
+        # 4. Added soybean based on expert knowledge
         self.crop_params = {
-            '稻谷': {
-                'M': (0.60, 1.00),    # 原0.75-0.95 → 0.60-1.00：适应混合像元峰值0.72，单一水稻可达更高
-                'm': (0.02, 0.30),    # 原0.05-0.15 → 0.02-0.30：适应暖冬年份高冬季EVI
-                'sos': (145, 195),    # 原160-180 → 145-195：插秧期扩展±15天适应气候变异
-                'mat': (205, 255),    # 原220-240 → 205-255：成熟期扩展±15天
-                'sen': (235, 285),    # 原250-270 → 235-285：衰老期扩展±15天
-                'eos': (265, 315)     # 原280-300 → 265-315：收获期扩展±15天
+            'rice': {
+                'M': (0.60, 1.00),    # Original 0.75-0.95 → 0.60-1.00: adapt to mixed pixel peak 0.72, single rice can reach higher
+                'm': (0.02, 0.30),    # Original 0.05-0.15 → 0.02-0.30: adapt to warm winter years with high winter EVI
+                'sos': (145, 195),    # Original 160-180 → 145-195: transplanting period expanded ±15 days for climate variability
+                'mat': (205, 255),    # Original 220-240 → 205-255: maturity period expanded ±15 days
+                'sen': (235, 285),    # Original 250-270 → 235-285: senescence period expanded ±15 days
+                'eos': (265, 315)     # Original 280-300 → 265-315: harvest period expanded ±15 days
             },
-            '玉米': {
-                'M': (0.40, 0.80),    # 原0.70-0.90 → 0.40-0.80：基于混合像元分析调整
-                'm': (0.02, 0.30),    # 原0.02-0.10 → 0.02-0.30：适应暖冬，虽然玉米冬季不生长但背景EVI会变化
-                'sos': (95, 145),     # 原110-130 → 95-145：播种期扩展±15天适应气候变异
-                'mat': (185, 235),    # 原200-220 → 185-235：成熟期扩展±15天
-                'sen': (215, 265),    # 原230-250 → 215-265：衰老期扩展±15天
-                'eos': (245, 295)     # 原260-280 → 245-295：收获期扩展±15天
+            'maize': {
+                'M': (0.40, 0.80),    # Original 0.70-0.90 → 0.40-0.80: adjusted based on mixed pixel analysis
+                'm': (0.02, 0.30),    # Original 0.02-0.10 → 0.02-0.30: adapt to warm winter, though maize doesn't grow in winter but background EVI changes
+                'sos': (150, 185),    # Original 110-130 → 95-145: sowing period expanded ±15 days for climate variability
+                'mat': (200, 245),    # Original 200-220 → 185-235: maturity period expanded ±15 days
+                'sen': (225, 275),    # Original 230-250 → 215-265: senescence period expanded ±15 days
+                'eos': (245, 295)     # Original 260-280 → 245-295: harvest period expanded ±15 days
             },
-            '小麦': {
-                'M': (0.50, 0.90),    # 原0.80-0.90 → 0.50-0.90：基于春季返青期观测EVI变异扩展下限
-                'm': (0.02, 0.30),    # 原0.02-0.08 → 0.02-0.30：关键调整！适应暖冬观测EVI高达0.44
-                'sos': (50, 90),      # 原65-75 → 50-90：返青期扩展±10天适应年际变异
-                'mat': (100, 140),    # 原115-125 → 100-140：抽穗期扩展±15天
-                'sen': (125, 165),    # 原140-150 → 125-165：衰老期扩展±15天
-                'eos': (140, 180)     # 原155-165 → 140-180：收获期扩展±15天
+            'wheat': {
+                'M': (0.50, 0.90),    # Original 0.80-0.90 → 0.50-0.90: expanded lower limit based on spring green-up EVI variability
+                'm': (0.02, 0.30),    # Original 0.02-0.08 → 0.02-0.30: key adjustment! adapt to warm winter observations EVI up to 0.44
+                'sos': (50, 90),      # Original 65-75 → 50-90: green-up period expanded ±10 days for interannual variability
+                'mat': (100, 140),    # Original 115-125 → 100-140: heading period expanded ±15 days
+                'sen': (125, 165),    # Original 140-150 → 125-165: senescence period expanded ±15 days
+                'eos': (140, 180)     # Original 155-165 → 140-180: harvest period expanded ±15 days
+            },
+            'soybean': {
+                'M': (0.40, 0.80),    # Summer peak similar to maize
+                'm': (0.02, 0.30),    # Consistent with other crops for winter background
+                'sos': (171, 201),    # Seedling stage: 06/20 - 07/20 (DOY 171-201)
+                'mat': (227, 237),    # End of branching to early flowering: 08/15 - 08/25 (DOY 227-237)
+                'sen': (263, 283),    # End of pod-filling to early maturity: 09/20 - 10/10 (DOY 263-283)
+                'eos': (283, 313)     # Maturity stage: After 10/10 (DOY 283-313)
             }
         }
     
     def phenology_model(self, t, M, m, sos, mat, sen, eos):
         """
-        6参数物候模型
+        6-parameter phenology model
         Ω_z(t) = (M - m)(S_sos,mat(t) - S_sen,eos(t)) + m
         
-        参数：
-        - t: 时间 (DOY)
-        - M, m: 最大值和最小值
-        - sos, mat, sen, eos: 四个关键物候期
+        Parameters:
+        - t: time (DOY)
+        - M, m: maximum and minimum values
+        - sos, mat, sen, eos: four key phenological stages
         """
-        # 第一个logistic函数：生长激活（添加数值保护）
+        # First logistic function: growth activation (add numerical protection)
         exp_arg1 = 2 * (sos + mat - 2*t) / (mat - sos)
-        exp_arg1 = np.clip(exp_arg1, -500, 500)  # 防止数值溢出
+        exp_arg1 = np.clip(exp_arg1, -500, 500)  # Prevent numerical overflow
         S_sos_mat = 1 / (1 + np.exp(exp_arg1))
         
-        # 第二个logistic函数：衰老激活（添加数值保护）
+        # Second logistic function: senescence activation (add numerical protection)
         exp_arg2 = 2 * (sen + eos - 2*t) / (eos - sen)
-        exp_arg2 = np.clip(exp_arg2, -500, 500)  # 防止数值溢出
+        exp_arg2 = np.clip(exp_arg2, -500, 500)  # Prevent numerical overflow
         S_sen_eos = 1 / (1 + np.exp(exp_arg2))
         
-        # 物候模型
+        # Phenology model
         evi = (M - m) * (S_sos_mat - S_sen_eos) + m
         
         return evi
     
     def sample_parameters(self, crop_name, n_samples=100):
-        """为指定作物随机采样参数"""
+        """Random sample parameters for specified crop"""
         if crop_name not in self.crop_params:
-            raise ValueError(f"未知作物类型: {crop_name}")
+            raise ValueError(f"Unknown crop type: {crop_name}")
         
         params = self.crop_params[crop_name]
         samples = []
@@ -93,9 +103,9 @@ class PhenologyForwardModel:
             for param, (min_val, max_val) in params.items():
                 sample[param] = random.uniform(min_val, max_val)
             
-            # 确保时间参数的逻辑顺序: sos < mat < sen < eos
+            # Ensure logical order of time parameters: sos < mat < sen < eos
             if not (sample['sos'] < sample['mat'] < sample['sen'] < sample['eos']):
-                # 重新排序
+                # Re-sort
                 times = sorted([sample['sos'], sample['mat'], sample['sen'], sample['eos']])
                 sample['sos'], sample['mat'], sample['sen'], sample['eos'] = times
             
@@ -104,112 +114,118 @@ class PhenologyForwardModel:
         return samples
     
     def generate_evi_timeseries(self, time_points, params):
-        """根据参数生成EVI时间序列"""
+        """Generate EVI time series based on parameters"""
         evi_values = []
         for t in time_points:
             evi = self.phenology_model(t, **params)
-            evi_values.append(max(0, min(1, evi)))  # 限制在[0,1]范围内
+            evi_values.append(max(0, min(1, evi)))  # Limit to [0,1] range
         
         return np.array(evi_values)
     
     def load_crop_data(self, file_path):
-        """加载作物数据"""
+        """Load crop data"""
         try:
             df = pd.read_csv(file_path)
-            print(f"数据文件加载成功，形状: {df.shape}")
-            print("列名:", df.columns.tolist())
+            print(f"Data file loaded successfully, shape: {df.shape}")
+            print("Column names:", df.columns.tolist())
             return df
         except Exception as e:
-            print(f"加载数据失败: {e}")
+            print(f"Failed to load data: {e}")
             return None
     
     def extract_year_data(self, df, target_year):
-        """提取指定年份的数据"""
-        # 查找指定年份的数据行
+        """Extract data for specified year"""
+        # Find data rows for specified year
         year_data = df[df['year'] == target_year].copy()
         
         if year_data.empty:
-            print(f"未找到{target_year}年数据")
+            print(f"No data found for year {target_year}")
             return None, None, None
         
-        # 排序数据
+        # Sort data
         year_data = year_data.sort_values('doy')
         
-        # 提取EVI数据（使用evi_mean列）
+        # Extract EVI data (using evi_mean column)
         if 'evi_mean' not in year_data.columns:
-            print("错误：未找到evi_mean列")
+            print("Error: evi_mean column not found")
             return None, None, None
             
         evi_data = year_data['evi_mean'].values
         time_points = year_data['doy'].values
         
-        # 提取作物比例（使用第一行数据，因为比例信息相同）
+        # Extract crop ratios (using first row data, as ratio information is the same)
         ratios = {}
         first_row = year_data.iloc[0]
         
-        # 根据实际列名提取比例
+        # Extract ratios based on actual column names
         if 'rice_ratio' in year_data.columns:
-            ratios['稻谷'] = first_row['rice_ratio'] / 100.0  # 转换为小数
+            ratios['rice'] = first_row['rice_ratio'] / 100.0  # Convert to decimal
         else:
-            ratios['稻谷'] = 0
+            ratios['rice'] = 0
             
         if 'whea_ratio' in year_data.columns:
-            ratios['小麦'] = first_row['whea_ratio'] / 100.0
+            ratios['wheat'] = first_row['whea_ratio'] / 100.0
         else:
-            ratios['小麦'] = 0
+            ratios['wheat'] = 0
             
         if 'maiz_ratio' in year_data.columns:
-            ratios['玉米'] = first_row['maiz_ratio'] / 100.0
+            ratios['maize'] = first_row['maiz_ratio'] / 100.0
         else:
-            ratios['玉米'] = 0
+            ratios['maize'] = 0
+            
+        if 'soyb_ratio' in year_data.columns:
+            ratios['soybean'] = first_row['soyb_ratio'] / 100.0
+        else:
+            ratios['soybean'] = 0
         
-        # 如果没有找到比例信息，使用默认值
+        # If no ratio information found, use default values
         if sum(ratios.values()) == 0:
-            print(f"未找到{target_year}年作物比例信息，使用默认比例")
-            ratios = {'稻谷': 0.5, '玉米': 0.3, '小麦': 0.2}
+            print(f"No crop ratio information found for year {target_year}, using default ratios")
+            ratios = {'rice': 0.4, 'maize': 0.3, 'wheat': 0.2, 'soybean': 0.1}
         
         return evi_data, ratios, time_points
     
     def run_forward_model(self, file_path, n_samples=100):
-        """运行前向模型"""
+        """Run forward model"""
         print("=" * 60)
-        print("物候前向模型验证系统 - 基于20年观测数据的参数更新版本")
+        print("Phenology Forward Model Validation System - Parameter Updated Version Based on 20-Year Observation Data")
         print("=" * 60)
-        print("📈 参数更新说明：")
-        print("   • 冬季最小值m: 原0.02-0.15 → 新0.02-0.30 (适应暖冬)")
-        print("   • 夏季最大值M: 水稻可达1.0, 小麦0.5-0.9 (适应峰值观测)")
-        print("   • 时间参数: 各扩展±10-15天 (适应气候变异)")
-        print("   • 方法论: 保持蒙特卡罗前向模拟，非参数优化")
+        print("📈 Parameter update notes:")
+        print("   • Winter minimum m: original 0.02-0.15 → new 0.02-0.30 (adapt to warm winter)")
+        print("   • Summer maximum M: rice up to 1.0, wheat 0.5-0.9 (adapt to peak observations)")
+        print("   • Time parameters: each expanded ±10-15 days (adapt to climate variability)")
+        print("   • Methodology: maintain Monte Carlo forward simulation, not parameter optimization")
+        print("   • Added soybean crop based on expert growth stage knowledge")
         print("=" * 60)
         
-        # 1. 加载数据
+        # 1. Load data
         df = self.load_crop_data(file_path)
         if df is None:
             return
         
-        # 2. 提取2020年数据
+        # 2. Extract 2020 data
         observed_evi, crop_ratios, time_points = self.extract_year_data(df, 2020)
         
         if observed_evi is None:
-            print("无法提取2020年数据")
+            print("Unable to extract 2020 data")
             return
         
-        print(f"观测EVI数据点数: {len(observed_evi)}")
-        print(f"作物比例: {crop_ratios}")
-        print(f"时间点范围: {time_points[0]:.1f} - {time_points[-1]:.1f} DOY")
+        print(f"Observed EVI data points: {len(observed_evi)}")
+        print(f"Crop ratios: {crop_ratios}")
+        print(f"Time point range: {time_points[0]:.1f} - {time_points[-1]:.1f} DOY")
         
-        # 3. 为每种作物生成参数样本
+        # 3. Generate parameter samples for each crop
         crop_samples = {}
-        for crop_name in ['稻谷', '玉米', '小麦']:
+        for crop_name in ['rice', 'maize', 'wheat', 'soybean']:
             if crop_name in crop_ratios and crop_ratios[crop_name] > 0:
                 samples = self.sample_parameters(crop_name, n_samples)
                 crop_samples[crop_name] = samples
-                print(f"{crop_name}: 生成 {len(samples)} 组参数样本")
+                print(f"{crop_name}: generated {len(samples)} parameter sample sets")
         
-        # 4. 计算每次采样的混合EVI
+        # 4. Calculate mixed EVI for each sampling
         all_mixed_evi = []
         
-        # 计算归一化权重
+        # Calculate normalized weights
         total_ratio = sum(crop_ratios[crop] for crop in crop_samples.keys() if crop in crop_ratios)
         normalized_weights = {}
         for crop_name in crop_samples.keys():
@@ -218,51 +234,51 @@ class PhenologyForwardModel:
             else:
                 normalized_weights[crop_name] = 0
         
-        print(f"归一化权重: {normalized_weights}")
-        print(f"权重和: {sum(normalized_weights.values()):.4f}")
+        print(f"Normalized weights: {normalized_weights}")
+        print(f"Weight sum: {sum(normalized_weights.values()):.4f}")
         
         for i in range(n_samples):
             mixed_evi = np.zeros(len(time_points))
             
             for crop_name, samples in crop_samples.items():
                 if crop_name in normalized_weights:
-                    # 生成该作物的EVI时间序列
+                    # Generate EVI time series for this crop
                     crop_evi = self.generate_evi_timeseries(time_points, samples[i])
-                    # 按归一化权重加权
+                    # Weight by normalized weights
                     mixed_evi += crop_evi * normalized_weights[crop_name]
             
             all_mixed_evi.append(mixed_evi)
         
-        # 5. 计算统计结果
+        # 5. Calculate statistical results
         all_mixed_evi = np.array(all_mixed_evi)
         mean_mixed_evi = np.mean(all_mixed_evi, axis=0)
         std_mixed_evi = np.std(all_mixed_evi, axis=0)
         
-        # 6. 计算与观测数据的差异
+        # 6. Calculate differences with observed data
         if len(observed_evi) == len(mean_mixed_evi):
             rmse = np.sqrt(np.mean((observed_evi - mean_mixed_evi) ** 2))
             mae = np.mean(np.abs(observed_evi - mean_mixed_evi))
             correlation = np.corrcoef(observed_evi, mean_mixed_evi)[0, 1]
             r_squared = correlation ** 2 if not np.isnan(correlation) else 0
         else:
-            print(f"警告：观测数据长度({len(observed_evi)}) 与模拟数据长度({len(mean_mixed_evi)})不匹配")
+            print(f"Warning: observed data length({len(observed_evi)}) does not match simulated data length({len(mean_mixed_evi)})")
             rmse = mae = r_squared = 0
             
         print("\n" + "=" * 40)
-        print("模型验证结果")
+        print("Model Validation Results")
         print("=" * 40)
-        print(f"RMSE (均方根误差): {rmse:.4f}")
-        print(f"MAE (平均绝对误差): {mae:.4f}")
-        print(f"R² (决定系数): {r_squared:.4f}")
+        print(f"RMSE (Root Mean Square Error): {rmse:.4f}")
+        print(f"MAE (Mean Absolute Error): {mae:.4f}")
+        print(f"R² (Coefficient of Determination): {r_squared:.4f}")
         
-        # 输出详细对比
+        # Output detailed comparison
         if len(observed_evi) == len(mean_mixed_evi):
-            print("\n时间点对比 (观测值 vs 模拟值):")
+            print("\nTime point comparison (observed vs simulated):")
             print("-" * 50)
             for i, (obs, sim) in enumerate(zip(observed_evi, mean_mixed_evi)):
-                print(f"点{i+1:2d}: {obs:.3f} vs {sim:.3f} (差异: {abs(obs-sim):.3f})")
+                print(f"Point{i+1:2d}: {obs:.3f} vs {sim:.3f} (difference: {abs(obs-sim):.3f})")
         
-        # 7. 保存结果
+        # 7. Save results
         results = {
             'timestamp': datetime.now().isoformat(),
             'file_path': file_path,
@@ -283,56 +299,57 @@ class PhenologyForwardModel:
         with open(result_file, 'w', encoding='utf-8') as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
         
-        print(f"\n结果已保存到: {result_file}")
+        print(f"\nResults saved to: {result_file}")
         
-        # 8. 生成可视化HTML
+        # 8. Generate visualization HTML
         self.generate_visualization(results)
         
         return results
     
     def run_multiyear_comparison(self, file_path, start_year=2002, end_year=2020, n_samples=200):
-        """运行多年前向模拟对比"""
+        """Run multi-year forward simulation comparison"""
         print("=" * 80)
-        print(f"多年前向模拟对比分析 ({start_year}-{end_year})")
+        print(f"Multi-year Forward Simulation Comparison Analysis ({start_year}-{end_year})")
         print("=" * 80)
-        print("📈 参数更新说明：")
-        print("   • 冬季最小值m: 原0.02-0.15 → 新0.02-0.30 (适应暖冬)")
-        print("   • 夏季最大值M: 水稻可达1.0, 小麦0.5-0.9 (适应峰值观测)")
-        print("   • 时间参数: 各扩展±10-15天 (适应气候变异)")
-        print("   • 方法论: 保持蒙特卡罗前向模拟，非参数优化")
+        print("📈 Parameter update notes:")
+        print("   • Winter minimum m: original 0.02-0.15 → new 0.02-0.30 (adapt to warm winter)")
+        print("   • Summer maximum M: rice up to 1.0, wheat 0.5-0.9 (adapt to peak observations)")
+        print("   • Time parameters: each expanded ±10-15 days (adapt to climate variability)")
+        print("   • Methodology: maintain Monte Carlo forward simulation, not parameter optimization")
+        print("   • Added soybean crop based on expert growth stage knowledge")
         print("=" * 80)
         
-        # 1. 加载数据
+        # 1. Load data
         df = self.load_crop_data(file_path)
         if df is None:
             return
         
-        # 存储所有年份的结果
+        # Store results for all years
         yearly_results = {}
         
-        # 2. 对每年进行前向模拟
+        # 2. Perform forward simulation for each year
         for year in range(start_year, end_year + 1):
-            print(f"\n🔄 正在处理 {year} 年...")
+            print(f"\n🔄 Processing year {year}...")
             
-            # 提取该年数据
+            # Extract data for this year
             observed_evi, crop_ratios, time_points = self.extract_year_data(df, year)
             
             if observed_evi is None:
-                print(f"❌ {year}年数据提取失败，跳过")
+                print(f"❌ Failed to extract data for year {year}, skipping")
                 continue
             
-            print(f"✓ 找到EVI数据点: {len(observed_evi)}个")
-            print(f"✓ 时间范围: DOY {time_points.min():.0f} - {time_points.max():.0f}")
-            print(f"✓ 作物比例: 稻谷{crop_ratios['稻谷']:.3f}, 小麦{crop_ratios['小麦']:.3f}, 玉米{crop_ratios['玉米']:.3f}")
+            print(f"✓ Found EVI data points: {len(observed_evi)}")
+            print(f"✓ Time range: DOY {time_points.min():.0f} - {time_points.max():.0f}")
+            print(f"✓ Crop ratios: rice{crop_ratios['rice']:.3f}, wheat{crop_ratios['wheat']:.3f}, maize{crop_ratios['maize']:.3f}, soybean{crop_ratios['soybean']:.3f}")
             
-            # 3. 为每种作物生成参数样本
+            # 3. Generate parameter samples for each crop
             crop_samples = {}
-            for crop_name in ['稻谷', '玉米', '小麦']:
+            for crop_name in ['rice', 'maize', 'wheat', 'soybean']:
                 if crop_name in crop_ratios and crop_ratios[crop_name] > 0:
                     samples = self.sample_parameters(crop_name, n_samples)
                     crop_samples[crop_name] = samples
             
-            # 4. 计算归一化权重
+            # 4. Calculate normalized weights
             total_ratio = sum(crop_ratios[crop] for crop in crop_samples.keys() if crop in crop_ratios)
             normalized_weights = {}
             for crop_name in crop_samples.keys():
@@ -341,38 +358,38 @@ class PhenologyForwardModel:
                 else:
                     normalized_weights[crop_name] = 0
             
-            # 5. 计算每次采样的混合EVI
+            # 5. Calculate mixed EVI for each sampling
             all_mixed_evi = []
             for i in range(n_samples):
                 mixed_evi = np.zeros(len(time_points))
                 
                 for crop_name, samples in crop_samples.items():
                     if crop_name in normalized_weights:
-                        # 生成该作物的EVI时间序列
+                        # Generate EVI time series for this crop
                         crop_evi = self.generate_evi_timeseries(time_points, samples[i])
-                        # 按归一化权重加权
+                        # Weight by normalized weights
                         mixed_evi += crop_evi * normalized_weights[crop_name]
                 
                 all_mixed_evi.append(mixed_evi)
             
-            # 6. 计算统计结果
+            # 6. Calculate statistical results
             all_mixed_evi = np.array(all_mixed_evi)
             mean_mixed_evi = np.mean(all_mixed_evi, axis=0)
             std_mixed_evi = np.std(all_mixed_evi, axis=0)
             
-            # 7. 计算与观测数据的差异
+            # 7. Calculate differences with observed data
             if len(observed_evi) == len(mean_mixed_evi):
                 rmse = np.sqrt(np.mean((observed_evi - mean_mixed_evi) ** 2))
                 mae = np.mean(np.abs(observed_evi - mean_mixed_evi))
                 correlation = np.corrcoef(observed_evi, mean_mixed_evi)[0, 1]
                 r_squared = correlation ** 2 if not np.isnan(correlation) else 0
             else:
-                print(f"⚠️  警告：{year}年观测数据长度({len(observed_evi)}) 与模拟数据长度({len(mean_mixed_evi)})不匹配")
+                print(f"⚠️  Warning: {year} observed data length({len(observed_evi)}) does not match simulated data length({len(mean_mixed_evi)})")
                 rmse = mae = r_squared = np.nan
             
-            print(f"📊 {year}年结果: RMSE={rmse:.4f}, MAE={mae:.4f}, R²={r_squared:.4f}")
+            print(f"📊 {year} results: RMSE={rmse:.4f}, MAE={mae:.4f}, R²={r_squared:.4f}")
             
-            # 8. 保存该年结果
+            # 8. Save results for this year
             yearly_results[year] = {
                 'year': year,
                 'crop_ratios': crop_ratios.copy(),
@@ -387,12 +404,12 @@ class PhenologyForwardModel:
                 }
             }
         
-        # 9. 生成总体统计分析
+        # 9. Generate overall statistical analysis
         print("\n" + "=" * 80)
-        print("📈 多年模拟结果统计分析")
+        print("📈 Multi-year Simulation Results Statistical Analysis")
         print("=" * 80)
         
-        # 提取有效的指标
+        # Extract valid metrics
         valid_rmse = [yearly_results[year]['metrics']['rmse'] for year in yearly_results 
                      if yearly_results[year]['metrics']['rmse'] is not None]
         valid_mae = [yearly_results[year]['metrics']['mae'] for year in yearly_results 
@@ -401,32 +418,34 @@ class PhenologyForwardModel:
                    if yearly_results[year]['metrics']['r_squared'] is not None]
         
         if valid_rmse:
-            print(f"RMSE统计: 平均={np.mean(valid_rmse):.4f}, 标准差={np.std(valid_rmse):.4f}")
-            print(f"         最小={np.min(valid_rmse):.4f}, 最大={np.max(valid_rmse):.4f}")
-            print(f"MAE统计:  平均={np.mean(valid_mae):.4f}, 标准差={np.std(valid_mae):.4f}")
-            print(f"         最小={np.min(valid_mae):.4f}, 最大={np.max(valid_mae):.4f}")
-            print(f"R²统计:   平均={np.mean(valid_r2):.4f}, 标准差={np.std(valid_r2):.4f}")
-            print(f"         最小={np.min(valid_r2):.4f}, 最大={np.max(valid_r2):.4f}")
+            print(f"RMSE statistics: mean={np.mean(valid_rmse):.4f}, std={np.std(valid_rmse):.4f}")
+            print(f"                min={np.min(valid_rmse):.4f}, max={np.max(valid_rmse):.4f}")
+            print(f"MAE statistics:  mean={np.mean(valid_mae):.4f}, std={np.std(valid_mae):.4f}")
+            print(f"                min={np.min(valid_mae):.4f}, max={np.max(valid_mae):.4f}")
+            print(f"R² statistics:   mean={np.mean(valid_r2):.4f}, std={np.std(valid_r2):.4f}")
+            print(f"                min={np.min(valid_r2):.4f}, max={np.max(valid_r2):.4f}")
         
-        # 10. 找出最佳和最差年份
+        # 10. Find best and worst years
         if valid_rmse:
             best_year = min(yearly_results.keys(), key=lambda y: yearly_results[y]['metrics']['rmse'] or float('inf'))
             worst_year = max(yearly_results.keys(), key=lambda y: yearly_results[y]['metrics']['rmse'] or 0)
             
-            print(f"\n🏆 最佳拟合年份: {best_year} (RMSE={yearly_results[best_year]['metrics']['rmse']:.4f})")
-            print(f"💔 最差拟合年份: {worst_year} (RMSE={yearly_results[worst_year]['metrics']['rmse']:.4f})")
+            print(f"\n🏆 Best fit year: {best_year} (RMSE={yearly_results[best_year]['metrics']['rmse']:.4f})")
+            print(f"💔 Worst fit year: {worst_year} (RMSE={yearly_results[worst_year]['metrics']['rmse']:.4f})")
         
-        # 11. 分析作物比例变化趋势
-        print(f"\n🌾 作物比例变化趋势:")
-        rice_ratios = [yearly_results[year]['crop_ratios']['稻谷'] for year in sorted(yearly_results.keys())]
-        wheat_ratios = [yearly_results[year]['crop_ratios']['小麦'] for year in sorted(yearly_results.keys())]
-        maize_ratios = [yearly_results[year]['crop_ratios']['玉米'] for year in sorted(yearly_results.keys())]
+        # 11. Analyze crop ratio change trends
+        print(f"\n🌾 Crop ratio change trends:")
+        rice_ratios = [yearly_results[year]['crop_ratios']['rice'] for year in sorted(yearly_results.keys())]
+        wheat_ratios = [yearly_results[year]['crop_ratios']['wheat'] for year in sorted(yearly_results.keys())]
+        maize_ratios = [yearly_results[year]['crop_ratios']['maize'] for year in sorted(yearly_results.keys())]
+        soybean_ratios = [yearly_results[year]['crop_ratios']['soybean'] for year in sorted(yearly_results.keys())]
         
-        print(f"稻谷比例: 平均={np.mean(rice_ratios):.3f}, 范围=[{np.min(rice_ratios):.3f}, {np.max(rice_ratios):.3f}]")
-        print(f"小麦比例: 平均={np.mean(wheat_ratios):.3f}, 范围=[{np.min(wheat_ratios):.3f}, {np.max(wheat_ratios):.3f}]")
-        print(f"玉米比例: 平均={np.mean(maize_ratios):.3f}, 范围=[{np.min(maize_ratios):.3f}, {np.max(maize_ratios):.3f}]")
+        print(f"Rice ratio: mean={np.mean(rice_ratios):.3f}, range=[{np.min(rice_ratios):.3f}, {np.max(rice_ratios):.3f}]")
+        print(f"Wheat ratio: mean={np.mean(wheat_ratios):.3f}, range=[{np.min(wheat_ratios):.3f}, {np.max(wheat_ratios):.3f}]")
+        print(f"Maize ratio: mean={np.mean(maize_ratios):.3f}, range=[{np.min(maize_ratios):.3f}, {np.max(maize_ratios):.3f}]")
+        print(f"Soybean ratio: mean={np.mean(soybean_ratios):.3f}, range=[{np.min(soybean_ratios):.3f}, {np.max(soybean_ratios):.3f}]")
         
-        # 12. 保存多年结果
+        # 12. Save multi-year results
         multiyear_summary = {
             'timestamp': datetime.now().isoformat(),
             'file_path': file_path,
@@ -447,19 +466,19 @@ class PhenologyForwardModel:
         with open(result_file, 'w', encoding='utf-8') as f:
             json.dump(multiyear_summary, f, indent=2, ensure_ascii=False)
         
-        print(f"\n💾 多年结果已保存到: {result_file}")
+        print(f"\n💾 Multi-year results saved to: {result_file}")
         
         return yearly_results
     
     def generate_visualization(self, results):
-        """生成可视化HTML页面（不使用matplotlib）"""
+        """Generate visualization HTML page (without matplotlib)"""
         html_content = f'''
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>物候模型验证结果</title>
+    <title>Phenology Model Validation Results</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {{
@@ -507,28 +526,28 @@ class PhenologyForwardModel:
 </head>
 <body>
     <div class="container">
-        <h1>🌾 物候前向模型验证结果</h1>
+        <h1>🌾 Phenology Forward Model Validation Results</h1>
         
         <div class="info-section">
-            <h3>📊 实验设置</h3>
-            <p><strong>数据文件:</strong> {results['file_path']}</p>
-            <p><strong>采样次数:</strong> {results['n_samples']}</p>
-            <p><strong>作物比例:</strong> {', '.join([f"{k}: {v:.3f}" for k, v in results['crop_ratios'].items()])}</p>
-            <p><strong>分析时间:</strong> {results['timestamp']}</p>
+            <h3>📊 Experiment Setup</h3>
+            <p><strong>Data file:</strong> {results['file_path']}</p>
+            <p><strong>Sampling times:</strong> {results['n_samples']}</p>
+            <p><strong>Crop ratios:</strong> {', '.join([f"{k}: {v:.3f}" for k, v in results['crop_ratios'].items()])}</p>
+            <p><strong>Analysis time:</strong> {results['timestamp']}</p>
         </div>
         
         <div class="metrics">
             <div class="metric-box">
                 <div class="metric-value">{results['metrics']['rmse']:.4f}</div>
-                <div>RMSE (均方根误差)</div>
+                <div>RMSE (Root Mean Square Error)</div>
             </div>
             <div class="metric-box">
                 <div class="metric-value">{results['metrics']['mae']:.4f}</div>
-                <div>MAE (平均绝对误差)</div>
+                <div>MAE (Mean Absolute Error)</div>
             </div>
             <div class="metric-box">
                 <div class="metric-value">{results['metrics']['r_squared']:.4f}</div>
-                <div>R² (决定系数)</div>
+                <div>R² (Coefficient of Determination)</div>
             </div>
         </div>
         
@@ -543,14 +562,14 @@ class PhenologyForwardModel:
     </div>
     
     <script>
-        // 主对比图
+        // Main comparison chart
         const ctx1 = document.getElementById('comparisonChart').getContext('2d');
         const comparisonChart = new Chart(ctx1, {{
             type: 'line',
             data: {{
                 labels: {results['time_points']},
                 datasets: [{{
-                    label: '观测EVI',
+                    label: 'Observed EVI',
                     data: {results['observed_evi']},
                     borderColor: '#dc3545',
                     backgroundColor: 'rgba(220, 53, 69, 0.1)',
@@ -558,7 +577,7 @@ class PhenologyForwardModel:
                     pointRadius: 5,
                     pointHoverRadius: 7
                 }}, {{
-                    label: '模拟EVI (平均)',
+                    label: 'Simulated EVI (Mean)',
                     data: {results['simulated_evi_mean']},
                     borderColor: '#007bff',
                     backgroundColor: 'rgba(0, 123, 255, 0.1)',
@@ -573,7 +592,7 @@ class PhenologyForwardModel:
                 plugins: {{
                     title: {{
                         display: true,
-                        text: 'EVI时间序列对比：观测值 vs 模拟值',
+                        text: 'EVI Time Series Comparison: Observed vs Simulated',
                         font: {{ size: 16, weight: 'bold' }}
                     }},
                     legend: {{
@@ -585,14 +604,14 @@ class PhenologyForwardModel:
                     x: {{
                         title: {{
                             display: true,
-                            text: '时间 (DOY - 年积日)'
+                            text: 'Time (DOY - Day of Year)'
                         }},
                         grid: {{ display: true }}
                     }},
                     y: {{
                         title: {{
                             display: true,
-                            text: 'EVI值'
+                            text: 'EVI Value'
                         }},
                         min: 0,
                         max: 1,
@@ -602,7 +621,7 @@ class PhenologyForwardModel:
             }}
         }});
         
-        // 误差分析图
+        // Error analysis chart
         const errors = {results['observed_evi']}.map((obs, i) => 
             Math.abs(obs - {results['simulated_evi_mean']}[i])
         );
@@ -613,7 +632,7 @@ class PhenologyForwardModel:
             data: {{
                 labels: {results['time_points']},
                 datasets: [{{
-                    label: '绝对误差',
+                    label: 'Absolute Error',
                     data: errors,
                     backgroundColor: 'rgba(255, 193, 7, 0.7)',
                     borderColor: '#ffc107',
@@ -626,7 +645,7 @@ class PhenologyForwardModel:
                 plugins: {{
                     title: {{
                         display: true,
-                        text: '各时间点的绝对误差分布',
+                        text: 'Absolute Error Distribution at Each Time Point',
                         font: {{ size: 16, weight: 'bold' }}
                     }}
                 }},
@@ -634,13 +653,13 @@ class PhenologyForwardModel:
                     x: {{
                         title: {{
                             display: true,
-                            text: '时间 (DOY - 年积日)'
+                            text: 'Time (DOY - Day of Year)'
                         }}
                     }},
                     y: {{
                         title: {{
                             display: true,
-                            text: '绝对误差'
+                            text: 'Absolute Error'
                         }},
                         min: 0
                     }}
@@ -655,27 +674,28 @@ class PhenologyForwardModel:
         with open('phenology_model_visualization.html', 'w', encoding='utf-8') as f:
             f.write(html_content)
         
-        print("可视化结果已保存到: phenology_model_visualization.html")
+        print("Visualization results saved to: phenology_model_visualization.html")
 
 def main():
-    """主函数"""
-    # 创建模型实例
+    """Main function"""
+    # Create model instance
     model = PhenologyForwardModel()
     
-    # 运行多年前向模拟对比（使用更新的参数范围）
-    print("🔄 使用基于20年观测数据更新的参数范围进行前向模拟...")
-    print("⭐ 主要更新：冬季最小值m扩展到0.30以适应暖冬年份")
-    print("⭐ 所有时间参数扩展±10-15天以适应气候变异")
-    print("⭐ 对比2002-2020年每年的拟合效果，每年作物比例不同")
+    # Run multi-year forward simulation comparison (using updated parameter ranges)
+    print("🔄 Running forward simulation with parameter ranges updated based on 20-year observation data...")
+    print("⭐ Main updates: winter minimum m expanded to 0.30 to adapt to warm winter years")
+    print("⭐ All time parameters expanded ±10-15 days to adapt to climate variability")
+    print("⭐ Compare fitting performance for each year from 2002-2020, with different crop ratios each year")
+    print("⭐ Added soybean crop based on expert growth stage knowledge")
     print()
     
     file_path = "0_0_huanghai_magic_data/grid6_稻谷_evi_crop_2001_2020.csv"
     yearly_results = model.run_multiyear_comparison(file_path, start_year=2002, end_year=2020, n_samples=100)  
     
     if yearly_results:
-        print("\n🎉 多年物候前向模拟对比完成！")
-        print(f"📊 成功处理了 {len(yearly_results)} 个年份的数据")
-        print(f"💾 请查看 'multiyear_phenology_results_2002_2020.json' 获取详细结果")
+        print("\n🎉 Multi-year phenology forward simulation comparison completed!")
+        print(f"📊 Successfully processed data for {len(yearly_results)} years")
+        print(f"💾 Please check 'multiyear_phenology_results_2002_2020.json' for detailed results")
 
 if __name__ == "__main__":
     main() 
